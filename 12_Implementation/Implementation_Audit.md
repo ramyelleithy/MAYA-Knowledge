@@ -16,7 +16,7 @@
 | 5 | Inspect Referral | Normalization | Compliant | None | Reuse |
 | 6 | Is Voice Message? / Get Media URL / Download Media / Transcribe Audio | Normalization | Compliant | None (transcription confidence not yet propagated) | Reuse |
 | 7 | Resolve Customer Message | Normalization | Compliant | None | Reuse |
-| 8 | Business Rules Check / Blocked by Business Rules? / Is Spam Category? / Canned Response – Financing / Canned Response – Spam | Input Business Rules Gate + Safe Fallback Composer | Non-compliant (sequencing) | Remove two false dependencies, then move to run immediately after Normalization, before Contact Resolution / Memory — see Analysis Update below | Boundary Repair Required before Relocation |
+| 8 | Business Rules Check / Blocked by Business Rules? / Is Spam Category? / Canned Response – Financing / Canned Response – Spam | Input Business Rules Gate + Safe Fallback Composer | Non-compliant (sequencing) | PR-001 done (leak removed); remove remaining false dependency (PR-002), then move to run immediately after Normalization, before Contact Resolution / Memory — see Analysis Update below | Boundary Repair In Progress (1 of 2 prerequisite fixes done) |
 | 9 | Chatwoot Sync – Incoming | Contact Resolution + Memory Engine (combined) | Partial | Split responsibilities: contact/conversation resolution vs. memory retrieval are one call today | Refactor |
 | 10 | Load Conversation Messages | Conversation Context Engine | Compliant | None | Reuse |
 | 11 | Format Conversation History | Conversation Context Engine | Compliant | None | Reuse |
@@ -72,7 +72,7 @@ Several nodes do real work that maps to a real Engine, but combine responsibilit
 
 **Current Assessment:** Boundary Repair Required before Relocation
 
-**Status:** Analysis Updated – Implementation Pending
+**Status:** Partially Implemented — PR-001 Complete (Architectural Leak resolved); PR-002 Pending (Accidental Coupling, re-scoped — see below); Relocation Itself Still Pending
 
 A deeper dependency trace — tracing every field read by `Business Rules Check`, `Blocked by Business Rules?`, and `Log Business Rule Block` back to the node that actually produces it — found that the original assessment understated the work required. Relocating the gate as originally proposed (a pure connection change, no node logic touched) would have silently broken it. Three dependencies were found:
 
@@ -80,7 +80,17 @@ A deeper dependency trace — tracing every field read by `Business Rules Check`
 - **Accidental Coupling — `Extract Project Code (Regex)`:** `Log Business Rule Block` depends on this node's `projectCode` output. The node's own code reads only `Inspect Referral`'s output (Normalization-stage data) — it has no genuine dependency on Contact Resolution, Memory, or Conversation State. Its late position in the graph (after `Determine Greeting & State`) is an arbitrary wiring choice, not a data requirement.
 - **Required Dependency — `conversation_id`:** `Log Business Rule Block` also depends on the Chatwoot `conversation_id`, which is genuinely created/resolved inside Contact Resolution (`Phoenix - Chatwoot Sync` sub-workflow) and cannot exist before it runs. This is the one dependency that is architecturally real and cannot be eliminated — only accommodated (the Feedback Logger's `conversation_id` field is optional by schema, so it can be sent empty when the gate blocks a message before Contact Resolution has run).
 
-**Implementation Impact:** This task is no longer a pure Refactor. It requires removing the two false dependencies (Architectural Leak + Accidental Coupling) before the relocation itself can be safely performed. The relocation plan (three connection changes: `Resolve Customer Message → Business Rules Check`, `Blocked by Business Rules? (Not Blocked) → Chatwoot Sync - Incoming`, `Is Direct Callback Selection? (Not Direct Callback) → Ask MAYA`) remains valid once those two prerequisite fixes are in place. No node has been modified yet — this section records the analysis only.
+**Implementation Impact:** This task is no longer a pure Refactor. It requires removing the two false dependencies (Architectural Leak + Accidental Coupling) before the relocation itself can be safely performed. The relocation plan (three connection changes: `Resolve Customer Message → Business Rules Check`, `Blocked by Business Rules? (Not Blocked) → Chatwoot Sync - Incoming`, `Is Direct Callback Selection? (Not Direct Callback) → Ask MAYA`) remains valid once those two prerequisite fixes are in place.
+
+##### PR-001 — Business Rules Independence (`customer_message`) — Complete
+
+Applied to the development workflow (`MAYA - WhatsApp Sales Agent copy`, n8n workflow ID `jI4meYNr11hP6nbJ`; production `X1QVNNYUFbJftuc2` untouched). `Resolve Customer Message`'s code now also returns `customer_message` as a verbatim duplicate of `resolved_customer_message`, computed at Normalization time instead of only later at `Prepare Context (Set Fields)`. Nothing else changed: same node count (64), identical connections graph, identical credentials on every node, no other node's parameters touched — confirmed by a full structural diff against the pre-change workflow export.
+
+Verification method: **Structural Verification only**, not a live/end-to-end test. Justification: the change is purely additive (a duplicate field, not consumed by any node while the gate has not yet been relocated — `Business Rules Check` still reads `customer_message` from `Prepare Context`, unchanged) with no altered execution path, no altered business logic, no altered consumer, and no altered runtime behavior — the value is provably identical to the existing `resolved_customer_message` field by construction. Per this project's test-selection rule, additive changes with no consumer/runtime-behavior change require structural verification only, not integration or end-to-end testing.
+
+##### PR-002 — Accidental Coupling (`project_code`) — Not started, re-scoped
+
+The originally proposed fix (physically relocating `Extract Project Code (Regex)` to run immediately after `Inspect Referral`) was found, on closer inspection of its outgoing connection, to also drag the entire downstream Project Engine detection/loading chain (`Has Project Code?` through `Merge Bible + Playbook`, ~15 nodes) into an earlier pipeline position — a much larger change than a single-node relocation, and one that touches Project Engine, which is out of scope for a boundary-repair PR. Deferred to its own independent PR. No node has been modified for this finding yet.
 
 2. **The entire Cognitive Core is one LLM call.** "Ask MAYA (OpenAI GPT-4o)" currently performs Reasoning, Decision, Planning, and Recommendation together, and even reaches partway into Response Composer's job, all in a single structured-output schema (reply, sales_state, file_request, callback_requested, metadata.confidence). This is the one finding that genuinely requires new architecture-driven work, not relocation — it is precisely the gap Level 2 exists to close.
 

@@ -43,7 +43,7 @@ A working n8n workflow already exists and is live (`MAYA - WhatsApp Sales Agent`
 
 - **Strong, reusable as-is:** Communication Gateway, Normalization (including Arabic voice transcription), Project Engine (both detection and Project Brain loading, including a working cache-based re-detection avoidance pattern), Conversation Context Engine, WhatsApp Reply, and the file-delivery branch.
 - **Two structural problems:**
-  1. The Business Rules Check (financing/spam detection) runs too late in the pipeline — after Contact Resolution, Memory retrieval, and full Project Brain loading, instead of immediately after Normalization. The detection logic itself is fine; only its position is wrong.
+  1. The Business Rules Check (financing/spam detection) runs too late in the pipeline — after Contact Resolution, Memory retrieval, and full Project Brain loading, instead of immediately after Normalization. The detection logic itself is fine, but a later dependency trace found the relocation is not a pure position fix: two of its supporting nodes had false dependencies on data that doesn't exist that early (see "Analysis Update — Finding #8" in `Implementation_Audit.md` for the full breakdown and PR-001/PR-002 status).
   2. The entire cognitive core — Reasoning, Decision, Planning, and Recommendation, plus part of Response Composer — is currently one single OpenAI GPT-4o call with one combined structured-output schema. This is the central piece of Level 2 work: decomposing this into properly separated Engine calls.
 - **Missing entirely:** the Output Business Rules Gate, the Reflection Engine, the Turn Identity Contract, and Recommendation History (needed to re-verify a prior recommendation's Preconditions when a customer returns).
 
@@ -55,7 +55,7 @@ Both a full Implementation Audit and the following principle were explicitly agr
 
 The agreed implementation order (a vertical-slice / walking-skeleton strategy, not full-depth-first):
 
-1. Relocate the Business Rules Check to run immediately after Normalization.
+1. Relocate the Business Rules Check to run immediately after Normalization. (In progress, split into sub-PRs after dependency analysis: PR-001 — remove the `customer_message` false dependency, done; PR-002 — remove the `project_code` false dependency, pending; then the relocation itself. See `Implementation_Audit.md`, Finding #8.)
 2. Introduce the Turn Identity Contract at the entry point.
 3. Split the current combined "Chatwoot Sync - Incoming" node into a genuine Contact Resolution step and a genuine Memory Engine retrieval step.
 4. Decompose the single "Ask MAYA" LLM call into its constituent Engines, incrementally: Decision Engine's classification first, then Reasoning, then Planning and Recommendation.

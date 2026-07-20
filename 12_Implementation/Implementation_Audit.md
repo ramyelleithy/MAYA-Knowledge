@@ -16,7 +16,7 @@
 | 5 | Inspect Referral | Normalization | Compliant | None | Reuse |
 | 6 | Is Voice Message? / Get Media URL / Download Media / Transcribe Audio | Normalization | Compliant | None (transcription confidence not yet propagated) | Reuse |
 | 7 | Resolve Customer Message | Normalization | Compliant | None | Reuse |
-| 8 | Business Rules Check / Blocked by Business Rules? / Is Spam Category? / Canned Response – Financing / Canned Response – Spam | Input Business Rules Gate + Safe Fallback Composer | Non-compliant (sequencing) | Move to run immediately after Normalization, before Contact Resolution / Memory | Refactor (relocate; logic itself reusable) |
+| 8 | Business Rules Check / Blocked by Business Rules? / Is Spam Category? / Canned Response – Financing / Canned Response – Spam | Input Business Rules Gate + Safe Fallback Composer | Non-compliant (sequencing) | Remove two false dependencies, then move to run immediately after Normalization, before Contact Resolution / Memory — see Analysis Update below | Boundary Repair Required before Relocation |
 | 9 | Chatwoot Sync – Incoming | Contact Resolution + Memory Engine (combined) | Partial | Split responsibilities: contact/conversation resolution vs. memory retrieval are one call today | Refactor |
 | 10 | Load Conversation Messages | Conversation Context Engine | Compliant | None | Reuse |
 | 11 | Format Conversation History | Conversation Context Engine | Compliant | None | Reuse |
@@ -64,7 +64,23 @@ Several nodes do real work that maps to a real Engine, but combine responsibilit
 
 ### What is structurally non-compliant (the two must-fix findings)
 
-1. **The Input Business Rules Gate runs too late.** In production, the financing/spam check happens after Contact Resolution, Memory retrieval, and full Project Brain loading — all the cost the architecture's early gate exists specifically to avoid. The logic itself (the regex patterns) is sound and reusable; only its position in the pipeline is wrong.
+1. **The Input Business Rules Gate runs too late.** In production, the financing/spam check happens after Contact Resolution, Memory retrieval, and full Project Brain loading — all the cost the architecture's early gate exists specifically to avoid. The logic itself (the regex patterns) is sound and reusable; only its position in the pipeline is wrong. **See "Analysis Update — Finding #8" below: a subsequent dependency trace found this is not a pure relocation.**
+
+#### Analysis Update — Finding #8: Input Business Rules Gate (2026-07-21)
+
+**Original Assessment:** Refactor (Relocate only)
+
+**Current Assessment:** Boundary Repair Required before Relocation
+
+**Status:** Analysis Updated – Implementation Pending
+
+A deeper dependency trace — tracing every field read by `Business Rules Check`, `Blocked by Business Rules?`, and `Log Business Rule Block` back to the node that actually produces it — found that the original assessment understated the work required. Relocating the gate as originally proposed (a pure connection change, no node logic touched) would have silently broken it. Three dependencies were found:
+
+- **Architectural Leak — `customer_message`:** `Business Rules Check` reads `$json.customer_message`, which is set by `Prepare Context (Set Fields)` as a verbatim alias of `resolved_customer_message` (already produced by `Resolve Customer Message`, the Normalization step). No data from Contact Resolution, Memory, or Project Engine is involved — this is a naming artifact of pipeline position, not a real dependency.
+- **Accidental Coupling — `Extract Project Code (Regex)`:** `Log Business Rule Block` depends on this node's `projectCode` output. The node's own code reads only `Inspect Referral`'s output (Normalization-stage data) — it has no genuine dependency on Contact Resolution, Memory, or Conversation State. Its late position in the graph (after `Determine Greeting & State`) is an arbitrary wiring choice, not a data requirement.
+- **Required Dependency — `conversation_id`:** `Log Business Rule Block` also depends on the Chatwoot `conversation_id`, which is genuinely created/resolved inside Contact Resolution (`Phoenix - Chatwoot Sync` sub-workflow) and cannot exist before it runs. This is the one dependency that is architecturally real and cannot be eliminated — only accommodated (the Feedback Logger's `conversation_id` field is optional by schema, so it can be sent empty when the gate blocks a message before Contact Resolution has run).
+
+**Implementation Impact:** This task is no longer a pure Refactor. It requires removing the two false dependencies (Architectural Leak + Accidental Coupling) before the relocation itself can be safely performed. The relocation plan (three connection changes: `Resolve Customer Message → Business Rules Check`, `Blocked by Business Rules? (Not Blocked) → Chatwoot Sync - Incoming`, `Is Direct Callback Selection? (Not Direct Callback) → Ask MAYA`) remains valid once those two prerequisite fixes are in place. No node has been modified yet — this section records the analysis only.
 
 2. **The entire Cognitive Core is one LLM call.** "Ask MAYA (OpenAI GPT-4o)" currently performs Reasoning, Decision, Planning, and Recommendation together, and even reaches partway into Response Composer's job, all in a single structured-output schema (reply, sales_state, file_request, callback_requested, metadata.confidence). This is the one finding that genuinely requires new architecture-driven work, not relocation — it is precisely the gap Level 2 exists to close.
 

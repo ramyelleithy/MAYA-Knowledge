@@ -17,7 +17,7 @@
 | 6 | Is Voice Message? / Get Media URL / Download Media / Transcribe Audio | Normalization | Compliant | None (transcription confidence not yet propagated) | Reuse |
 | 7 | Resolve Customer Message | Normalization | Compliant | None | Reuse |
 | 8 | Business Rules Check / Blocked by Business Rules? / Is Spam Category? / Canned Response – Financing / Canned Response – Spam | Input Business Rules Gate + Safe Fallback Composer | Non-compliant (sequencing) | PR-001 done (leak removed); remove remaining false dependency (PR-002), then move to run immediately after Normalization, before Contact Resolution / Memory — see Analysis Update below | Boundary Repair In Progress (1 of 2 prerequisite fixes done) |
-| 9 | Chatwoot Sync – Incoming | Contact Resolution + Memory Engine (combined) | Partial | Split responsibilities: contact/conversation resolution vs. memory retrieval are one call today | Refactor |
+| 9 | Chatwoot Sync – Incoming | Contact Resolution | Compliant | None — see Analysis Update below (ADR-001) | Closed — False Positive (Resolved by ADR-001) |
 | 10 | Load Conversation Messages | Conversation Context Engine | Compliant | None | Reuse |
 | 11 | Format Conversation History | Conversation Context Engine | Compliant | None | Reuse |
 | 12 | Load Conversation State | Memory Engine | Partial | Extend schema: no Turn ID, no Recommendation History | Refactor |
@@ -57,10 +57,25 @@ The context-and-infrastructure layer is strong: Communication Gateway, Normaliza
 ### What is partially compliant (Refactor)
 
 Several nodes do real work that maps to a real Engine, but combine responsibilities that the architecture keeps separate, or are missing a field the architecture requires (confidence, Turn ID, structured objects). These need reshaping, not rebuilding:
-- Chatwoot Sync – Incoming currently does both Contact Resolution and Memory retrieval in one call.
 - Determine Greeting & State is a simplified, non-probabilistic stand-in for Conversation State Recognition.
 - Memory persistence (Load/Persist Conversation State, Chatwoot Sync – Outgoing) stores far less than `Memory_State_Writer.md` requires.
 - Prepare WhatsApp Payload mixes Response Composer's job with WhatsApp Reply's payload-shaping concern.
+
+**Note:** Finding #9 (Chatwoot Sync – Incoming) previously appeared in this list ("does both Contact Resolution and Memory retrieval in one call"). It has been closed as a False Positive — see "Analysis Update — Finding #9" below.
+
+#### Analysis Update — Finding #9: Chatwoot Sync – Incoming (2026-07-21)
+
+**Original Assessment:** Refactor (split Contact Resolution and Memory Engine, described as "one call today")
+
+**Current Assessment:** Closed — False Positive (Resolved by ADR-001)
+
+**Status:** Closed
+
+A code-level trace of the sub-workflow `Phoenix - Chatwoot Sync` (n8n ID `jky0e1OeyDQuuD1p`), which `Chatwoot Sync – Incoming` calls, found no Memory Engine responsibility inside it at all — it performs Contact Resolution (find/create Chatwoot contact, find/create conversation) followed by a `Create Message` call that posts the message into that Chatwoot conversation. No Data Table is read or written anywhere in this sub-workflow. The actual Memory Engine responsibility (durable `conversation_summary`/`sales_state` retrieval, keyed by `conversation_id`) already exists as a fully separate node, `Load Conversation State` (Finding #12), reading from its own Data Table (`64FX2qQEstLuJSwV`). There was never a combined Contact-Resolution-plus-Memory-Engine call to split — that separation already existed in production.
+
+This left one genuine, narrower architectural question: whether the `Create Message` (Chatwoot message-logging) side effect belongs inside Contact Resolution's boundary or should be its own responsibility. This question was raised as **ADR-001** and decided: **keep the current design** (message logging stays bundled with Contact Resolution inside `Chatwoot Sync – Incoming`/`Chatwoot Sync – Outgoing`), on the grounds that no operational evidence justifies the added complexity and failure surface of splitting a tightly-coupled, single-purpose call, consistent with how `Chatwoot Sync – Outgoing` (Finding #30) was already accepted without a split. Full reasoning, options, and trade-offs are recorded in ADR-001 (change-management record, not committed to this repository — available in the implementation session history).
+
+**Implementation Impact:** None. No node, connection, or Engine Contract was or will be modified for this finding. `Contact_Resolution.md` and `Memory_Engine.md` remain unchanged and unaffected.
 
 ### What is structurally non-compliant (the two must-fix findings)
 

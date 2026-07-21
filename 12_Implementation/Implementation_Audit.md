@@ -141,11 +141,10 @@ The Output Business Rules Gate, the Reflection Engine, the Turn Identity Contrac
 
 Following the vertical-slice strategy already agreed, and respecting "never rewrite working production behavior without architectural justification":
 
-1. **Relocate** the Business Rules Check to run immediately after Normalization (low-risk, high-value fix — this alone closes the first structural finding above).
+1. **Relocate** the Business Rules Check to run immediately after Normalization (low-risk, high-value fix — this alone closes the first structural finding above). PR-001 (Architectural Leak removed) is complete; PR-002 (Accidental Coupling) is pending; the relocation itself has not been performed yet.
 2. **Introduce** the Turn Identity Contract at Receive WhatsApp Messages (additive, does not disturb existing behavior).
-3. **Split** Chatwoot Sync – Incoming into a genuine Contact Resolution step and a genuine Memory Engine retrieval step.
-4. **Decompose** "Ask MAYA" into its constituent Engines — the significant piece of new work, done incrementally: first extract Decision Engine's classification (including the already-correct hardcoded callback pattern) as its own explicit step, then Reasoning, then Planning and Recommendation.
-5. **Add** the Output Business Rules Gate and Reflection Engine as new steps before delivery.
-6. **Extend** persistence to cover the Mental Model and Recommendation History, not just conversation_summary and sales_state.
+3. **Decompose** "Ask MAYA" into its constituent Engines — the significant piece of new work, done incrementally: first extract Decision Engine's classification (including the already-correct hardcoded callback pattern) as its own explicit step, then Reasoning, then Planning and Recommendation.
+4. **Add** the Output Business Rules Gate and Reflection Engine as new steps before delivery.
+5. **Extend** persistence to cover the Mental Model and Recommendation History, not just conversation_summary and sales_state.
 
 Nothing above requires discarding the production workflow. Every step is additive or relocative, consistent with the audit's own findings.

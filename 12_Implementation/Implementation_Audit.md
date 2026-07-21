@@ -23,9 +23,9 @@
 | 12 | Load Conversation State | Memory Engine | Partial | Extend schema: no Turn ID, no Recommendation History | Refactor |
 | 13 | Determine Greeting & State | Conversation State Recognition | Partial | Confidence value added (interim, high/low) — see Analysis Update below. Position taxonomy still missing: no explicit taxonomy exists in `Conversation_State_Model.md`, and none has been defined — Requires ADR | Refactor (split: Confidence done; Position Taxonomy Requires ADR) |
 | 14 | Extract Project Code (Regex) / Has Project Code? / Save Project Code / Get Cached Project Code / Apply Cached Project Code | Project Engine (Detection) | Compliant | None — a clean implementation of the conditional detection rule | Reuse |
-| 15 | Get Project Code Mapping (Sheets) / Search Project Folder / Check Project Folder Exists | Project Engine (Detection → Brain Loader) | Compliant | None | Reuse |
+| 15 | Get Project Code Mapping (Sheets) / Search Project Folder / Check Project Folder Exists | Project Engine (Detection → Brain Loader) | Boundary Repair Complete | None — see Analysis Update below (Missing Empty-Result Handling) | Boundary Repair — Complete |
 | 16 | Get Project Bible / Download / Extract / Get Sales Playbook / Download / Extract / Merge Bible + Playbook | Project Engine (Brain Loader) | Compliant | None — the Project Brain, faithfully implemented | Reuse |
-| 17 | Default Reply – Project Not Found | Safe Fallback Composer | Compliant | None | Reuse |
+| 17 | Default Reply – Project Not Found | Safe Fallback Composer | Boundary Repair Complete | None — see Analysis Update below (Finding #17) | Boundary Repair + Bug Fix — Complete |
 | 18 | Log Project Not Found | Observability (cross-cutting) | Compliant | None | Reuse |
 | 19 | Prepare Context (Set Fields) | Context Builder | Partial | Assembles context correctly but has no Customer Engine input feeding it — no Mental Model exists upstream | Refactor |
 | 20 | Is Direct Callback Selection? / Build Direct Callback Reply | Decision Engine (hardcoded special case) | Partial | A legitimate pattern (deterministic classification for a specific, unambiguous input) but undocumented as such | Refactor (formalize as an explicit deterministic Decision Engine path) |
@@ -130,6 +130,48 @@ Verification method: **Structural Verification only**, consistent with this proj
 ##### Position Taxonomy — Requires ADR, not started
 
 No taxonomy has been assumed, referenced, or implemented. `sales_state`'s existing string values (`'Greeting'`, `'Discovery'`, and whatever was previously persisted) are unchanged. This remains open until a dedicated architectural decision determines the taxonomy's source.
+
+#### Analysis Update — Finding #15: Missing Empty-Result Handling after Project Mapping Lookup (2026-07-21)
+
+**Original Assessment:** Compliant (no action required)
+
+**Current Assessment:** Boundary Repair Required — Complete
+
+**Status:** Closed — Fixed and verified end-to-end
+
+**Root Cause:** `Get Project Code Mapping (Google Sheets)` has no `Always Output Data` setting. When a project code has no matching row (a customer references a project code the business doesn't recognize), the node returns zero items. n8n's default execution semantics mean a node receiving zero input items does not execute at all — so the entire downstream chain (`Search Project Folder` → `Check Project Folder Exists` → `Default Reply - Project Not Found`) silently never ran. The execution completed with status `success` (not an error), making this failure invisible to any error-based monitoring. This is a genuine defect, not a relocation or documentation issue: architecturally, the Sheets mapping is the authoritative directory for Project Code → Folder Name — an unmapped code should short-circuit immediately to Safe Fallback Composer, with no reason to query Google Drive at all.
+
+**Engine Contract Affected:** The implicit item-propagation contract between the Project Engine's mapping-lookup step and its Brain-Loader continuation — a lookup step must always emit at least one item downstream (a found row, or an explicit not-found signal), for either branch to execute.
+
+**Runtime Contract Affected:** The Project Not Found notification path — the customer-facing guarantee that an unrecognized project code produces an explicit reply. This could not be fulfilled because execution died upstream of the reply logic.
+
+**Fix Applied (development workflow `jI4meYNr11hP6nbJ`; production `X1QVNNYUFbJftuc2` untouched):**
+- `Get Project Code Mapping (Google Sheets)`: `Always Output Data` enabled (Node Setting only — no parameter, expression, or credential changed).
+- New node `Project Mapping Found?` (IF) inserted between `Get Project Code Mapping (Google Sheets)` and `Search Project Folder`, checking whether `Folder Name` is non-empty. True → `Search Project Folder` (identical to the previous direct connection, for every case where a row is actually found — this is a structural no-op for the existing "found" path). False → `Default Reply - Project Not Found` + `Log Project Not Found` (both pre-existing targets, reused as-is).
+- `Search Project Folder` and `Check Project Folder Exists` were deliberately left untouched — an earlier candidate fix (only enabling `Always Output Data` with a Drive-query fallback string) was rejected after analysis showed it would risk a false-positive Drive match (`contains ''` matches every file in the parent folder) rather than the architecturally correct immediate short-circuit.
+
+**Verification method:** Structural Verification (65 nodes; the new node plus one `alwaysOutputData: true` setting were the only changes; all connections diffed and confirmed unchanged elsewhere) and full Runtime Verification (Execution `1200` on `jI4meYNr11hP6nbJ`, `TEST_NONEXISTENT_PROJECT_ZZZ` scenario) — see Finding #17 below for the shared end-to-end result, since both fixes were validated in the same execution.
+
+#### Analysis Update — Finding #17: Default Reply – Project Not Found (2026-07-21)
+
+**Original Assessment:** Compliant (no action required)
+
+**Current Assessment:** Boundary Repair + Bug Fix — Complete, verified end-to-end
+
+**Status:** Closed
+
+This node was blocked from ever executing until Finding #15 (above) was fixed. Once reachable, two further defects were found and fixed in sequence, plus one false alarm was resolved.
+
+**Root Cause 1 — Lost Credential Bindings (Boundary Repair):** The development workflow (`jI4meYNr11hP6nbJ`), a duplicate of production, lost three credential bindings during the duplication process: `Load Conversation Messages` (Chatwoot API Auth), `Get Project Code Mapping (Google Sheets)` (Google Service Account account), and `Send WhatsApp Reply` (WhatsApp Cloud API Auth). Each surfaced only when the pipeline reached that specific node. Fixed by re-attaching the same credentials already in use on the equivalent production nodes — no parameter, expression, or connection touched on any of the three nodes.
+
+**Root Cause 2 — Reply Field Contract Violation (Bug Fix):** `Default Reply - Project Not Found` wrote its message text to a field named `reply_text`, then attempted `reply: {{ $json.reply_text }}` in the same Set node. n8n Set-node assignments do not chain — `$json` inside every assignment refers to the node's original input, not to sibling assignments computed in the same operation — so `reply` always evaluated against the node's actual (empty) input and resolved to `null`. Every other reply-producing node in the workflow (`Parse MAYA Response`, `Canned Response - Financing`, `Canned Response - Spam`, `Build Direct Callback Reply`, and the `Ask MAYA` LLM's own structured-output schema) already used `reply` as the sole canonical field — confirmed by a full workflow-wide audit of every writer and reader of `reply`/`reply_text`. `reply_text` is not a parallel contract; it exists only as a derived logging alias created downstream in `Prepare WhatsApp Payload` for `Chatwoot Sync - Outgoing`. Fixed by rewriting `Default Reply - Project Not Found` to assign `reply` directly (matching the pattern of every other reply-producing node) and removing the broken derived assignment. No other node was touched — `Prepare WhatsApp Payload` and `Chatwoot Sync - Outgoing` already correctly consumed `reply` / derived their own `reply_text`, and self-corrected once given a valid `reply` value.
+
+**False Alarm — Test Data, Not a System Defect:** During external verification, `Send WhatsApp Reply` failed against the live Meta Graph API with a generic `(#100) Invalid parameter` error, reproducible identically outside n8n (Graph API Explorer, direct HTTP calls) with a verified-valid System User token, correct WABA/Phone-Number ownership, and an open 24-hour customer window. The cause was eventually isolated: the test scenario's simulated customer number (`201505158793`) was, digit-for-digit, the business's own registered WhatsApp number (`+20 15 05158793`) — Meta's API correctly rejects a Business Phone Number attempting to message itself. This was a defect in the test fixture used for manual verification, not in MAYA, n8n, or the Meta integration. No system change resulted from this finding; noted here so future testing avoids reusing the business's own number as a simulated customer.
+
+**Final Verification — Execution `1200`** (development workflow, `jI4meYNr11hP6nbJ`, real recipient number, `TEST_NONEXISTENT_PROJECT_ZZZ` scenario): full end-to-end success —
+`Get Project Code Mapping (Google Sheets)` → `Project Mapping Found?` (false) → `Default Reply - Project Not Found` (`reply` populated correctly) → `Should Persist Summary?` → `Prepare WhatsApp Payload` (`text.body` populated correctly) → `Send WhatsApp Reply` (Meta returned a real `wamid`, message delivered and confirmed received) → `Chatwoot Sync - Outgoing` (logged) → `Send Final Response`. `Log Project Not Found` also fired exactly once, unchanged. Production (`X1QVNNYUFbJftuc2`) was not modified at any point in this investigation.
+
+**Regression check:** The only connection change with any reach into other conversation paths was the `Get Project Code Mapping (Google Sheets) → Project Mapping Found?` reroute (Finding #15) — for a matched project code, `Folder Name` is non-empty, so the node routes to `Search Project Folder` exactly as the previous direct connection did; behavior for the "project found" path is unchanged by construction. Financing, Spam, Direct Callback, and File Request paths share no modified node or connection with this session's fixes (confirmed by structural diff) and were not exercised.
 
 ### What is missing entirely (Build new)
 

@@ -21,7 +21,7 @@
 | 10 | Load Conversation Messages | Conversation Context Engine | Compliant | None | Reuse |
 | 11 | Format Conversation History | Conversation Context Engine | Compliant | None | Reuse |
 | 12 | Load Conversation State | Memory Engine | Partial | Extend schema: no Turn ID, no Recommendation History | Refactor |
-| 13 | Determine Greeting & State | Conversation State Recognition | Partial | Currently rule-based on message count / stored summary presence only; no confidence value, no explicit position taxonomy from `Conversation_State_Model.md` | Refactor |
+| 13 | Determine Greeting & State | Conversation State Recognition | Partial | Confidence value added (interim, high/low) — see Analysis Update below. Position taxonomy still missing: no explicit taxonomy exists in `Conversation_State_Model.md`, and none has been defined — Requires ADR | Refactor (split: Confidence done; Position Taxonomy Requires ADR) |
 | 14 | Extract Project Code (Regex) / Has Project Code? / Save Project Code / Get Cached Project Code / Apply Cached Project Code | Project Engine (Detection) | Compliant | None — a clean implementation of the conditional detection rule | Reuse |
 | 15 | Get Project Code Mapping (Sheets) / Search Project Folder / Check Project Folder Exists | Project Engine (Detection → Brain Loader) | Compliant | None | Reuse |
 | 16 | Get Project Bible / Download / Extract / Get Sales Playbook / Download / Extract / Merge Bible + Playbook | Project Engine (Brain Loader) | Compliant | None — the Project Brain, faithfully implemented | Reuse |
@@ -108,6 +108,28 @@ Verification method: **Structural Verification only**, not a live/end-to-end tes
 The originally proposed fix (physically relocating `Extract Project Code (Regex)` to run immediately after `Inspect Referral`) was found, on closer inspection of its outgoing connection, to also drag the entire downstream Project Engine detection/loading chain (`Has Project Code?` through `Merge Bible + Playbook`, ~15 nodes) into an earlier pipeline position — a much larger change than a single-node relocation, and one that touches Project Engine, which is out of scope for a boundary-repair PR. Deferred to its own independent PR. No node has been modified for this finding yet.
 
 2. **The entire Cognitive Core is one LLM call.** "Ask MAYA (OpenAI GPT-4o)" currently performs Reasoning, Decision, Planning, and Recommendation together, and even reaches partway into Response Composer's job, all in a single structured-output schema (reply, sales_state, file_request, callback_requested, metadata.confidence). This is the one finding that genuinely requires new architecture-driven work, not relocation — it is precisely the gap Level 2 exists to close.
+
+#### Analysis Update — Finding #13: Determine Greeting & State (2026-07-21)
+
+**Original Assessment:** Refactor (add confidence value; add explicit position taxonomy from `Conversation_State_Model.md`)
+
+**Current Assessment:** Split into two independent parts with different status.
+
+**Status:** Confidence — Complete (interim representation). Position Taxonomy — Requires ADR, not started.
+
+Verification of `Conversation_State_Model.md` found it does not define any concrete, named taxonomy of conversation-state positions — only general principles (multiple weighted position hypotheses, revised continuously; no fixed labels). The only concrete stage names anywhere in the repository are `Conversation.md`'s "Conversation Lifecycle Stages" (Entry, Understanding, Qualification, Recommendation, Clarification, Decision Support, Human Handoff), a different document describing conversation flow, with no explicit statement that it is meant to be state-recognition's taxonomy. Implementing "an explicit position taxonomy from `Conversation_State_Model.md`" as originally worded would mean inventing a taxonomy not actually present in that document. This part is therefore **Requires ADR** — not implemented, not scheduled, pending a future architectural decision on which document (if any) supplies the taxonomy.
+
+The confidence-value part was independent and well-documented (`Runtime_Architecture.md`'s Confidence Contract explicitly requires Conversation State Recognition to attach a confidence value), but the contract leaves the **value format** itself as an open Level 2 design choice ("How the Confidence Contract is technically represented and thresholded"). Three interim representations were considered — a categorical evidence-source label (`confirmed`/`inferred`), a coarse numeric flag (`0`/`1`), and a structured object with a `basis` field — and rejected: the first conflated confidence with evidence source rather than confidence itself, the second risked being misread as a calibrated probability, and the third was more structural commitment than warranted for a first implementation.
+
+##### Confidence Value — Complete
+
+Applied to the development workflow (`jI4meYNr11hP6nbJ`; production `X1QVNNYUFbJftuc2` untouched). `Determine Greeting & State`'s code now also returns `confidence: hasExistingSummary ? 'high' : 'low'` — a plain two-value categorical label representing confidence level itself (not evidence source, not a numeric calibration). This is explicitly an **interim implementation**, not a finalized calibration standard for the Confidence Contract; it may be replaced by a different representation once that format is formally decided, without requiring any other engine to change (no current consumer reads this field). No other field, node, connection, or credential was touched — confirmed by a full structural diff against the pre-change workflow export (64 nodes before and after, identical connections graph, zero unexpected parameter or credential changes).
+
+Verification method: **Structural Verification only**, consistent with this project's test-selection rule for additive changes with no altered consumer or runtime behavior.
+
+##### Position Taxonomy — Requires ADR, not started
+
+No taxonomy has been assumed, referenced, or implemented. `sales_state`'s existing string values (`'Greeting'`, `'Discovery'`, and whatever was previously persisted) are unchanged. This remains open until a dedicated architectural decision determines the taxonomy's source.
 
 ### What is missing entirely (Build new)
 

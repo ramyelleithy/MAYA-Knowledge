@@ -53,7 +53,7 @@ Twelve states: `New`, `Qualifying`, `Exploring`, `Interested`, `Objection Handli
 
 Implemented in v1 (deterministic, in `Sales State Reader` / `Sales State Writer`):
 - `New → Qualifying` on the second customer message.
-- `Qualifying → Exploring` on first detected project code.
+- `Qualifying → Exploring` on first detected project code (also fires directly from `New` when the project code arrives on the customer's first message, e.g. Click-to-WhatsApp ad referral — see Beta Validation Log, Bug 2).
 - `Exploring → Interested` on Interest Score ≥ 4 for `active_project` (signals: `callback_requested` +5, `file_request` +3, payment/budget/availability keyword matches +2 each, location keyword +1, 3rd turn on the same project +1).
 - `Exploring / Interested / Objection Handling → Awaiting Callback` on `callback_requested = true`.
 - Resume from `Follow-up` / `Dormant` to `previous_active_state` on any new customer message.
@@ -105,3 +105,15 @@ Bug-hunting pass against the live development workflow, started after v1 was mar
 **Verification:** live execution `1231` — a full turn (project-matched question → brochure file request) completed end-to-end: Ask MAYA replied, `Sales State Writer` ran, `Persist Sales State` and `Sync Sales State to Chatwoot` succeeded, the PDF brochure was uploaded to WhatsApp and delivered (`Send Client File via WhatsApp` succeeded), and the reply text was sent.
 
 **Regression check:** re-ran the previously-working `Project Not Found` path (execution `1236`) — still succeeds unchanged, since that path never touches the fixed nodes.
+
+### Bug 2 — First message with a project code never left `New`
+
+**Symptom:** a customer's very first message — the normal Click-to-WhatsApp-ad entry point, where the referral headline (and therefore the project code) arrives together with message #1 — left `sales_state` at `New` indefinitely instead of advancing to `Exploring`, even though `active_project` was correctly detected and recorded.
+
+**Root cause:** in `Sales State Reader`, the project-code block only promoted state to `Exploring` when `salesState === 'Qualifying'`. But `New → Qualifying` only fires when `isFirstMessage === false`, so on message #1 the state was still `New` when the project-code check ran, and the `Exploring` promotion never matched. The transition rule "`Qualifying → Exploring` on first detected project code" (as documented) implicitly assumed the project code always arrives on message 2+; it does not for CTWA leads, which is the majority real-world entry path.
+
+**Fix:** one-line condition change in `Sales State Reader` — `if (salesState === 'Qualifying') salesState = 'Exploring';` → `if (salesState === 'Qualifying' || salesState === 'New') salesState = 'Exploring';`. Nothing else in the node changed.
+
+**Verification:** live execution `1245` on a fresh phone number, first message with `[MRG-SHERATON]` referral → `Sales State Reader` output `sales_state: "Exploring"`, `active_project: "MRG-SHERATON"` on message #1; confirmed synced to Chatwoot and reflected in the reply.
+
+**Regression check:** live execution `1249` — fresh phone number, first message with no referral → `sales_state` correctly stays `"New"`, `active_project` stays `null`. The pre-existing `New → Qualifying` (message 2, no project) and `Qualifying → Exploring` (message 2+, with project) paths are unchanged by this fix.

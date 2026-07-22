@@ -3,6 +3,8 @@
 **Source workflow:** `MAYA - WhatsApp Sales Agent` (`X1QVNNYUFbJftuc2`), active, last updated 2026-07-17.
 **Method:** Every node in the production workflow, mapped against the frozen Level 1 Runtime Architecture. No redesign performed. This is a mapping exercise only.
 
+**Scope note:** This audit maps the 23-Engine model only. It does not cover **Sales State Engine v1**, a separate additive capability built on the development workflow (`jI4meYNr11hP6nbJ`) after this audit — see `Sales_State_Engine_v1.md`. That work replaced how `sales_state` is produced (see row 21 and row 25 below, both updated to reflect it) but is not itself part of the frozen Level 1 Engine Mapping Matrix.
+
 ---
 
 ## Engine Mapping Matrix
@@ -29,11 +31,11 @@
 | 18 | Log Project Not Found | Observability (cross-cutting) | Compliant | None | Reuse |
 | 19 | Prepare Context (Set Fields) | Context Builder | Partial | Assembles context correctly but has no Customer Engine input feeding it — no Mental Model exists upstream | Refactor |
 | 20 | Is Direct Callback Selection? / Build Direct Callback Reply | Decision Engine (hardcoded special case) | Partial | A legitimate pattern (deterministic classification for a specific, unambiguous input) but undocumented as such | Refactor (formalize as an explicit deterministic Decision Engine path) |
-| 21 | Ask MAYA (OpenAI GPT-4o) | Reasoning Engine + Decision Engine + Planning Engine + Recommendation Engine + Response Composer (all five, collapsed) | Non-compliant (structural) | Five distinct Engines with five distinct contracts are currently one LLM call with one combined output schema | Refactor (major) |
+| 21 | Ask MAYA (OpenAI GPT-4o) | Reasoning Engine + Decision Engine + Planning Engine + Recommendation Engine + Response Composer (all five, collapsed) | Non-compliant (structural) | Five distinct Engines with five distinct contracts are currently one LLM call with one combined output schema. On the development workflow, the schema's own `sales_state` field is now vestigial — it is still emitted by the LLM but no longer read by anything downstream; `sales_state` is produced separately by Sales State Engine v1 (see `Sales_State_Engine_v1.md`) | Refactor (major) |
 | 22 | Parse MAYA Response | Partial stand-in for Reflection Engine | Partial | Only validates JSON structure and supplies a fallback on parse failure; does not evaluate reasoning quality, confidence, or Preconditions | Refactor |
 | 23 | Is Parse Error? / Log Parse Error | Observability (cross-cutting) | Compliant | None | Reuse |
 | 24 | Is Callback Requested? / Notify – Callback Request / Log Callback Request | Business-specific side action (outside Runtime Engine scope) | Compliant | None — legitimately outside the 23-Engine model, a Propify-specific escalation notification | Reuse |
-| 25 | Should Persist Summary? / Persist Conversation State | Memory & State Writer | Partial | Persists conversation_summary and sales_state only; no Mental Model, no Recommendation History, no Turn ID | Refactor |
+| 25 | Should Persist Summary? / Persist Conversation State | Memory & State Writer | Partial | On the development workflow, persists `conversation_summary` only — `sales_state` was deliberately removed from this node's write in favor of the new unconditional `Persist Sales State` node (Sales State Engine v1), to avoid a last-write-wins race between two nodes writing the same column; no Mental Model, no Recommendation History, no Turn ID | Refactor |
 | 26 | Prepare WhatsApp Payload | Response Composer | Partial | Combined with payload/channel-formatting concerns that belong to WhatsApp Reply | Refactor |
 | 27 | Has File Request? / Get Client Files Folder / Find Matching Client File / Client File Found? / Download Client File / Upload Media to WhatsApp / Send Client File via WhatsApp | File Request branch (anticipated, undesigned, in `Runtime_Architecture.md`'s open items) | Compliant with intent | None required now | Reuse |
 | 28 | Log File Not Found | Observability (cross-cutting) | Compliant | None | Reuse |
@@ -187,6 +189,14 @@ Following the vertical-slice strategy already agreed, and respecting "never rewr
 2. **Introduce** the Turn Identity Contract at Receive WhatsApp Messages (additive, does not disturb existing behavior).
 3. **Decompose** "Ask MAYA" into its constituent Engines — the significant piece of new work, done incrementally: first extract Decision Engine's classification (including the already-correct hardcoded callback pattern) as its own explicit step, then Reasoning, then Planning and Recommendation.
 4. **Add** the Output Business Rules Gate and Reflection Engine as new steps before delivery.
-5. **Extend** persistence to cover the Mental Model and Recommendation History, not just conversation_summary and sales_state.
+5. **Extend** persistence to cover the Mental Model and Recommendation History, not just conversation_summary and (as of Sales State Engine v1) sales_state.
 
 Nothing above requires discarding the production workflow. Every step is additive or relocative, consistent with the audit's own findings.
+
+---
+
+## Status as of Sales State Engine v1
+
+Findings #8 (Input Business Rules Gate boundary repair, PR-001), #9, #13 (Confidence half), #15, and #17 are closed, as detailed in their Analysis Update sections above — this closes what this project's protocol calls **Phoenix Runtime Stabilization**. PR-002 (Finding #8's remaining prerequisite) and the Position Taxonomy half of Finding #13 remain open, as does everything under "What is missing entirely."
+
+Separately, and orthogonally to this audit, **Sales State Engine v1** was implemented on the same development workflow — see `Sales_State_Engine_v1.md` for its architecture, transition rules, and a Beta Validation Log of bugs found and fixed against it after implementation. Two bugs were found and fixed there (13 nodes missing credentials on the matched-project path; `New` never promoting to `Exploring` when a project code arrives on a customer's first message), and Batch 1 of adversarial testing (9 scenarios: terminal-state stickiness, multi-project tracking, and regression across Project Not Found / Project Found / Callback / Brochure) passed with zero further defects. See `Release_Notes_MAYA_v2_Beta.md` for the full account.

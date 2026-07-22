@@ -1,5 +1,7 @@
 # MAYA / Phoenix Runtime — Project Brief for Claude Code
 
+> **Status note (added after this brief's original scope was completed):** This document is the *original* onboarding brief and reflects the project's state at that time — treat "Current State of Production" and the Implementation Strategy below as a historical starting point, not the present state. Since this brief was written: Phoenix Runtime Stabilization closed (Findings #8/PR-001, #9, #13/confidence, #15, #17 — see `Implementation_Audit.md`'s "Status as of Sales State Engine v1" section), and a separate additive capability, **Sales State Engine v1**, was implemented and passed its first round of adversarial testing (see `Sales_State_Engine_v1.md`). PR-002 and the full "Decompose Ask MAYA" item (step 4 below) remain not started. For current status, read `Implementation_Audit.md` and `Sales_State_Engine_v1.md` before this brief.
+
 ## What This Project Is
 
 MAYA is an AI Senior Property Consultant built for **Propify Brokerage Agency**, an Egyptian real estate brokerage. She operates on WhatsApp, covering the full Egyptian real estate market across many developers — not scoped to any single developer's inventory. She is explicitly **not** a chatbot or customer-support bot: she is designed as a consultative, honest, memory-carrying property consultant that cannot be misled into over-promising and cannot quit like a human salesperson can.

@@ -87,3 +87,21 @@ Implemented in v1 (deterministic, in `Sales State Reader` / `Sales State Writer`
 7. Direct Callback selection path (`Build Direct Callback Reply`) → same convergence check as #6, plus confirm `callback_requested = true` correctly drives `→ Awaiting Callback`.
 8. Inspect the Chatwoot conversation UI directly after a test message to confirm the `sales_state` / `active_project` custom attributes are visible to agents, not just present in the API response.
 9. A returning customer whose conversation was last active >30 days ago sends a new message → confirm today's known gap (no `Follow-up`/`Dormant` state was ever entered, since no scheduled sweep exists) rather than assuming it was silently handled.
+
+---
+
+## Beta Validation Log
+
+Bug-hunting pass against the live development workflow, started after v1 was marked implemented. Each entry is a real defect reproduced on `jI4meYNr11hP6nbJ`, root-caused, and fixed with the smallest possible change. No new features or refactors were introduced during this pass.
+
+### Bug 1 — Matched-project path unreachable: 13 nodes had no credential assigned
+
+**Symptom:** every execution that ever reached a *real, matched* project code (as opposed to the `Project Not Found` short-circuit) failed with `Node does not have any credentials set` / `Credentials not found`. Prior "verified live" executions referenced in this document's Status line all took the not-found or no-referral path, which never touches these nodes — so this had never been exercised end-to-end since the workflow copy was created.
+
+**Root cause:** `Search Project Folder (Google Drive)`, `Get Project Bible (Drive)`, `Download Project Bible (File)`, `Get Sales Playbook (Drive)`, `Download Sales Playbook (File)`, `Get Client Files Folder`, `Find Matching Client File`, `Download Client File`, `Ask MAYA (OpenAI GPT-4o)`, `Upload Media to WhatsApp`, `Get Media URL`, `Send Client File via WhatsApp`, and `Notify - Callback Request` had no credential wired to them (or referenced a stale/deleted credential ID) on the development copy. Each was fixed to the same credential already used successfully elsewhere in the same workflow: `Google Service Account account` (`kJL1uYdg58njQ54X`) for the Drive nodes, `OpenAI account` (`O26guWZr5ghyoN0e`) for Ask MAYA, `WhatsApp Cloud API Auth` (`RvoZFXZ80vm4GJrg`) for the WhatsApp HTTP nodes.
+
+**Fix:** `setNodeCredential` on each of the 13 nodes, pointing at the correct existing credential. No parameters, logic, or connections touched.
+
+**Verification:** live execution `1231` — a full turn (project-matched question → brochure file request) completed end-to-end: Ask MAYA replied, `Sales State Writer` ran, `Persist Sales State` and `Sync Sales State to Chatwoot` succeeded, the PDF brochure was uploaded to WhatsApp and delivered (`Send Client File via WhatsApp` succeeded), and the reply text was sent.
+
+**Regression check:** re-ran the previously-working `Project Not Found` path (execution `1236`) — still succeeds unchanged, since that path never touches the fixed nodes.

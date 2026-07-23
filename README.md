@@ -124,7 +124,9 @@ This repository has grown to also hold the layers built on top of the Foundation
 | `09_Runtime_Artifacts_and_Contracts/` | The three structured objects the Runtime passes between Engines: `Reasoning_Conclusion.md`, `Recommendation.md`, `Plan.md`. |
 | `10_Engine_Specifications/` | All 23 Engine specifications that make up the Main Consultation Pipeline, each written against `Engine_Contract.md`. |
 | `11_Validation_Reports/` | The five end-to-end journeys used to validate the frozen architecture before implementation began. |
-| `12_Implementation/` | The Implementation Audit mapping production against the frozen architecture; the original onboarding brief; the Sales State Engine v1 implementation record and its Beta Validation bug log; and the MAYA v2 Beta release notes. |
+| `12_Implementation/` | The Implementation Audit mapping production against the frozen architecture; the original onboarding brief; the Sales State Engine v1 implementation record and its Beta Validation bug log; the MAYA v2 Beta release notes; and the CTA/skills update record. |
+| `12_Implementation/Product_Skills/` | MAYA's sales-skill specs (system prompt, constitution, sales methodology) — merged in from the formerly separate `PBI-Sales-Agent` repo. See each file's provenance note for what's still current vs. superseded by the live n8n prompt. |
+| `12_Implementation/Infrastructure/` | Phoenix Server infrastructure docs and history — merged in from `PBI-Sales-Agent`. |
 
 ## How Contributors Should Use This Repository
 
